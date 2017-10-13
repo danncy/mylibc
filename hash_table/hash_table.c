@@ -77,7 +77,7 @@ void hash_destroy() {
     bucket->capacity = head->capacity;    \
                                           \
     head->prev = bucket;                  \
-    head->tail = NULL;    
+    head->tail = NULL;
 
 void *hash_lookup(void *key) {
     if (!key) {
@@ -131,7 +131,7 @@ int hash_add(void *key, void* data) {
         head->capacity++;
         
         head->hkey  = strdup((char *)key);
-        head->hdata = strdup((char *)data);        
+        head->hdata = strdup((char *)data);
         head->tail  = head;
         g_htable->bucket[index] = head;
         return TRUE;
@@ -153,7 +153,7 @@ int hash_add(void *key, void* data) {
         tail->prev->next = NULL;
         bucket_free(tail);
     } 
-    
+
     head->prev = new_bucket;
     new_bucket->next = head;
     new_bucket->capacity = capacity + 1;
@@ -162,9 +162,9 @@ int hash_add(void *key, void* data) {
 
     head->hkey  = strdup((char *)key);
     head->hdata = strdup((char *)data);
-    
+
     g_htable->bucket[index] = new_bucket;
-    
+
     return TRUE;
 }
 
