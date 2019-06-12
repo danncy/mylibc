@@ -1,9 +1,19 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include "hash_table.h"
+#include <pthread.h>
+
+static __thread struct hash *g_htable = NULL;
+
+#define bucket_kv_free(bucket) \
+    free(bucket->hkey);        \
+    free(bucket->hdata);       \
+    bucket->hkey = NULL;       \
+    bucket->hdata = NULL;
 
 #define  bucket_free(bucket) \
-    free(bucket->hkey);      \
-    free(bucket->hdata);     \
+    bucket_kv_free(bucket)   \
     free(bucket);            \
     bucket = NULL;
 
@@ -31,7 +41,7 @@ void hash_create() {
         DEBUG("the default hashtable is already created");
         return;
     }
-    
+
     g_htable = (struct hash *)malloc(sizeof(struct hash));
     if (!g_htable) {
         DEBUG("memory alloc failed.");
@@ -64,7 +74,7 @@ void hash_destroy() {
                 bucket_delete(&g_htable->bucket[i]);
             }
         }
-        
+
         free(g_htable);
         g_htable = NULL;
     }
@@ -75,12 +85,13 @@ void hash_destroy() {
     bucket->next = head;                  \
     bucket->prev = NULL;                  \
     bucket->capacity = head->capacity;    \
+    head->capacity = 0;                   \
                                           \
     head->prev = bucket;                  \
     head->tail = NULL;
 
 void *hash_lookup(void *key) {
-    if (!key) {
+    if (!key || !g_htable) {
         DEBUG("input para is NULL\n");
         return NULL;
     }
@@ -91,13 +102,19 @@ void *hash_lookup(void *key) {
 
     while(bucket) {
         if (0 == g_htable->hash_cmp(key, bucket->hkey, strlen((char*)key))) {
-            if (head != bucket && bucket != head->tail) {
+            // 如果是头部节点匹配，就直接返回数据
+            if (bucket == head) {
+                return bucket->hdata;
+            } else if (head != bucket && bucket != head->tail) {
+                // 如果bucket在当前hash桶的中间位置，就将她移动到头部，并指向当前的tail
                 bucket->prev->next = bucket->next;
                 bucket->next->prev = bucket->prev;
+
                 bucket->tail = head->tail;
 
                 lru_bucket_move(bucket, head);
             } else if (bucket == head->tail && head->capacity>1) {
+                // 如果本身就是尾部，则尾部是自己的上一个节点
                 bucket->prev->next = NULL;
                 bucket->tail = bucket->prev;
 
@@ -111,8 +128,8 @@ void *hash_lookup(void *key) {
     return NULL;
 }
 
-int hash_add(void *key, void* data) {
-    if (!key || !data) {
+int hash_set(void *key, void* data) {
+    if (!key || !data || !g_htable) {
         DEBUG("input para is NULL\n");
         return FALSE;
     }
@@ -120,6 +137,7 @@ int hash_add(void *key, void* data) {
     uint32_t index = g_htable->hash_key(key);
     struct hash_bucket* head = g_htable->bucket[index];
 
+    // 初始化第一个hash桶
     if (!head) {
         head = (struct hash_bucket*)malloc(sizeof(struct hash_bucket));
         if (!head) {
@@ -129,7 +147,7 @@ int hash_add(void *key, void* data) {
 
         memset(head, 0, sizeof(*head));
         head->capacity++;
-        
+
         head->hkey  = strdup((char *)key);
         head->hdata = strdup((char *)data);
         head->tail  = head;
@@ -137,22 +155,38 @@ int hash_add(void *key, void* data) {
         return TRUE;
     }
 
-    int capacity = head->capacity;
-    struct hash_bucket *new_bucket = 
-        (struct hash_bucket *)malloc(sizeof(struct hash_bucket)); 
+    // 如果已经存在hash桶，则比较当前的key是否已经存在，存在则修改对应的数据
+    struct hash_bucket *tmp = head;
+    while(tmp) {
+        if (0 == g_htable->hash_cmp(key, tmp->hkey, strlen((char*)key))) {
+            free(tmp->hdata);
+            tmp->hdata = strdup((char*)data);
+            return TRUE;
+        }
+        tmp = tmp->next;
+    }
 
+    // 如果对应的key不存在，则将当前key的数据放hash桶的头部，当做热点数据，下次查询优先命中
+    int capacity = head->capacity;
+    struct hash_bucket *new_bucket =
+        (struct hash_bucket *)malloc(sizeof(struct hash_bucket));
     if (!new_bucket) {
         DEBUG("no memory for more hash_bucket\n");
         return FALSE;
+    } else {
+        memset(new_bucket, 0, sizeof(*new_bucket));
     }
 
+    // 如果当前hash桶的冲突链容量已经达到最大值，则将尾部的数据丢弃
+    // 简化处理，这里不做时间周期的计算，处于尾部的节点说明lookup的次数少
     if (capacity >= HASH_BUCKET_CAPACITY_MAX) {
         struct hash_bucket *tail = head->tail;
         head->tail = tail->prev;
 
         tail->prev->next = NULL;
         bucket_free(tail);
-    } 
+        capacity--;
+    }
 
     head->prev = new_bucket;
     new_bucket->next = head;
@@ -160,8 +194,8 @@ int hash_add(void *key, void* data) {
     new_bucket->tail = head->tail;
     head->tail = NULL;
 
-    head->hkey  = strdup((char *)key);
-    head->hdata = strdup((char *)data);
+    new_bucket->hkey  = strdup((char *)key);
+    new_bucket->hdata = strdup((char *)data);
 
     g_htable->bucket[index] = new_bucket;
 
@@ -169,7 +203,7 @@ int hash_add(void *key, void* data) {
 }
 
 int hash_delete(void *key) {
-    if (!key) {
+    if (!key || !g_htable) {
         DEBUG("input para is NULL\n");
         return FALSE;
     }
@@ -203,7 +237,7 @@ int hash_delete(void *key) {
             if (g_htable->bucket[index]) {
                 g_htable->bucket[index]->capacity--;
             }
-            
+
             return TRUE;
         }
         bkt = bkt->next;
@@ -213,10 +247,8 @@ int hash_delete(void *key) {
 
 static void bucket_print(struct hash_bucket** ptr) {
     struct hash_bucket *bkt = *ptr;
-    struct hash_bucket *tmp;
-
     while(bkt) {
-        printf("key=[%s],data=[%s]\n", (char*)bkt->hkey, (char*)bkt->hdata);
+        printf("key=[%s],data=[%s], thread-id: %d\n", (char*)bkt->hkey, (char*)bkt->hdata, pthread_self());
         bkt = bkt->next;
     }
 }
@@ -231,25 +263,3 @@ void hash_iter_print() {
     }
 }
 
-int main(int argc, char* argv[]) {
-    hash_create();
-
-    hash_add("first", "danxi");
-    hash_add("second", "test");
-    hash_add("three", "sad code");
-    hash_add("four", "let's go");
-
-    hash_iter_print();
-
-    char * t1 = (char *)hash_lookup("first");
-    char * t2 = (char *)hash_lookup("second");
-
-    printf("%s  %s \n", t1, t2);
-    printf("%s \n", (char*)hash_lookup("four"));
-
-    hash_delete("four");
-    hash_iter_print();
-    hash_destroy();
-
-    return 0;
-}
