@@ -17,7 +17,7 @@ static __thread struct hash *g_htable = NULL;
     free(bucket);            \
     bucket = NULL;
 
-uint32_t string_hash_key(void* str) {
+static uint32_t string_hash_key(void* str) {
     char *tmp = (char *)str;
     uint32_t key = 0;
     while(*tmp)
@@ -28,32 +28,12 @@ uint32_t string_hash_key(void* str) {
     return key%HASH_BUCKET_MAX;
 }
 
-int string_hash_cmp(const void* src, const void* dst, int len) {
+static int string_hash_cmp(const void* src, const void* dst, int len) {
     if (!src || !dst) {
         DEBUG("src addr: %p, dst addr: %p", src, dst);
         return -1;
     }
     return strncmp((char *)src, (char *)dst, len);
-}
-
-void hash_create() {
-    if (g_htable) {
-        DEBUG("the default hashtable is already created");
-        return;
-    }
-
-    g_htable = (struct hash *)malloc(sizeof(struct hash));
-    if (!g_htable) {
-        DEBUG("memory alloc failed.");
-        return;
-    }
-
-    memset(g_htable, 0, sizeof(struct hash));
-
-    g_htable->hash_key = string_hash_key;
-    g_htable->hash_cmp = string_hash_cmp;
-
-    return;
 }
 
 static void bucket_delete(struct hash_bucket** ptr) {
@@ -67,14 +47,21 @@ static void bucket_delete(struct hash_bucket** ptr) {
     }
 }
 
-void hash_destroy() {
+static void hash_clear() {
     if (g_htable) {
         for(int i=0; i<HASH_BUCKET_MAX; i++) {
             if (g_htable->bucket[i]) {
                 bucket_delete(&g_htable->bucket[i]);
             }
         }
+    }
+    return;
+}
 
+void hash_destroy() {
+    hash_clear();
+
+    if (g_htable) {
         free(g_htable);
         g_htable = NULL;
     }
@@ -90,7 +77,7 @@ void hash_destroy() {
     head->prev = bucket;                  \
     head->tail = NULL;
 
-void *hash_lookup(void *key) {
+static void *hash_lookup(void *key) {
     if (!key || !g_htable) {
         DEBUG("input para is NULL\n");
         return NULL;
@@ -128,7 +115,7 @@ void *hash_lookup(void *key) {
     return NULL;
 }
 
-int hash_set(void *key, void* data) {
+static int hash_set(void *key, void* data) {
     if (!key || !data || !g_htable) {
         DEBUG("input para is NULL\n");
         return FALSE;
@@ -202,7 +189,7 @@ int hash_set(void *key, void* data) {
     return TRUE;
 }
 
-int hash_delete(void *key) {
+static int hash_delete(void *key) {
     if (!key || !g_htable) {
         DEBUG("input para is NULL\n");
         return FALSE;
@@ -253,7 +240,7 @@ static void bucket_print(struct hash_bucket** ptr) {
     }
 }
 
-void hash_iter_print() {
+static void hash_iter_print() {
     if (g_htable) {
         for(int i=0; i<HASH_BUCKET_MAX; i++) {
             if (g_htable->bucket[i]) {
@@ -261,5 +248,30 @@ void hash_iter_print() {
             }
         }
     }
+}
+
+struct hash* hash_create() {
+    if (g_htable) {
+        DEBUG("the default hashtable is already created");
+        return;
+    }
+
+    g_htable = (struct hash *)malloc(sizeof(struct hash));
+    if (!g_htable) {
+        DEBUG("memory alloc failed.");
+        return;
+    }
+
+    memset(g_htable, 0, sizeof(struct hash));
+
+    g_htable->hash_key = string_hash_key;
+    g_htable->hash_cmp = string_hash_cmp;
+    g_htable->find = hash_lookup;
+    g_htable->set = hash_set;
+    g_htable->erase = hash_delete;
+    g_htable->print = hash_iter_print;
+    g_htable->clear = hash_clear;
+
+    return g_htable;
 }
 

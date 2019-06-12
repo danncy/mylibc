@@ -28,17 +28,15 @@ struct hash_bucket {
 struct hash {
     uint32_t            (*hash_key)(void *);
     int                 (*hash_cmp)(const void *, const void*, int len);
+    void*               (*find)(void *key);
+    int                 (*set)(void *key, void* data);
+    int                 (*erase)(void *key);
+    void                (*print)();
+    void                (*clear)();
     struct hash_bucket* bucket[HASH_BUCKET_MAX];
 };
 
-uint32_t string_hash_key(void* str);
-int string_hash_cmp(const void* src, const void* dst, int len);
-
-void hash_create();
-void *hash_lookup(void *key);
-int  hash_set(void *key, void* data);
-int  hash_delete(void *key);
+struct hash* hash_create();
 void hash_destroy();
-void hash_iter_print();
 
 #endif // __HASH_TABLE_H__
